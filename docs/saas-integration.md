@@ -41,4 +41,4 @@ Yes. We use OAuth2 for authentication and only request read-only access to your 
 
 ---
 
-**Questions?** Email [support@adsoptimizer.dev](mailto:support@adsoptimizer.dev) or open an issue in this repo.
+**Questions?** Open an issue in this repo.

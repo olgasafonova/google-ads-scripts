@@ -1,5 +1,11 @@
 # Google Ads Scripts
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Made for Google Ads](https://img.shields.io/badge/Made%20for-Google%20Ads-4285F4?logo=google-ads&logoColor=white)](https://ads.google.com)
+[![JavaScript](https://img.shields.io/badge/JavaScript-ES5-F7DF1E?logo=javascript&logoColor=black)](https://developers.google.com/google-ads/scripts)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+[![GitHub stars](https://img.shields.io/github/stars/olgasafonova/google-ads-scripts?style=social)](https://github.com/olgasafonova/google-ads-scripts)
+
 Free, open-source automation scripts for Google Ads. No coding experience required to use them.
 
 **What these scripts do:** They run inside your Google Ads account on a schedule you set, automatically monitoring your campaigns and alerting you when something needs attention. Think of them as a virtual assistant that watches your account 24/7.

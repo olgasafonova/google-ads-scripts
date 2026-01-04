@@ -92,12 +92,13 @@ function main() {
 function getCampaignData() {
   var campaigns = [];
 
-  // Get all campaign performance
-  var query = 'SELECT CampaignName, CampaignId, AdvertisingChannelType, ' +
-              'Impressions, Clicks, Cost, Conversions, ConversionValue ' +
-              'FROM CAMPAIGN_PERFORMANCE_REPORT ' +
-              'WHERE Impressions > 0 AND CampaignStatus = ENABLED ' +
-              'DURING ' + CONFIG.DATE_RANGE;
+  // Get all campaign performance using GAQL
+  var query = 'SELECT campaign.name, campaign.id, campaign.advertising_channel_type, ' +
+              'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
+              'metrics.conversions, metrics.conversions_value ' +
+              'FROM campaign ' +
+              'WHERE metrics.impressions > 0 AND campaign.status = "ENABLED" ' +
+              'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
   var report = AdsApp.report(query);
   var rows = report.rows();
@@ -105,14 +106,14 @@ function getCampaignData() {
   while (rows.hasNext()) {
     var row = rows.next();
     campaigns.push({
-      name: row['CampaignName'],
-      id: row['CampaignId'],
-      type: row['AdvertisingChannelType'],
-      impressions: parseInt(row['Impressions'], 10),
-      clicks: parseInt(row['Clicks'], 10),
-      cost: parseFloat(row['Cost']),
-      conversions: parseFloat(row['Conversions']),
-      conversionValue: parseFloat(row['ConversionValue'])
+      name: row['campaign.name'],
+      id: row['campaign.id'],
+      type: row['campaign.advertising_channel_type'],
+      impressions: parseInt(row['metrics.impressions'], 10),
+      clicks: parseInt(row['metrics.clicks'], 10),
+      cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+      conversions: parseFloat(row['metrics.conversions']),
+      conversionValue: parseFloat(row['metrics.conversions_value'])
     });
   }
 

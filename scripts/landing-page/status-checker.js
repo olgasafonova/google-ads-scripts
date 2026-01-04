@@ -105,18 +105,19 @@ function main() {
 function getLandingPageUrls() {
   var urlMap = {};
 
-  // Get URLs from ads
-  var adQuery = 'SELECT CampaignName, AdGroupName, CreativeFinalUrls, Impressions, Cost ' +
-                'FROM AD_PERFORMANCE_REPORT ' +
-                'WHERE Impressions > 0 ' +
-                'DURING ' + CONFIG.DATE_RANGE;
+  // Get URLs from ads using GAQL
+  var adQuery = 'SELECT campaign.name, ad_group.name, ' +
+                'ad_group_ad.ad.final_urls, metrics.impressions, metrics.cost_micros ' +
+                'FROM ad_group_ad ' +
+                'WHERE metrics.impressions > 0 ' +
+                'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
   if (CONFIG.CAMPAIGN_NAME_CONTAINS) {
-    adQuery += " AND CampaignName CONTAINS_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_CONTAINS + "'";
+    adQuery += " AND campaign.name REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_CONTAINS + ".*'";
   }
 
   if (CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN) {
-    adQuery += " AND CampaignName DOES_NOT_CONTAIN_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + "'";
+    adQuery += " AND campaign.name NOT REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + ".*'";
   }
 
   try {
@@ -125,8 +126,8 @@ function getLandingPageUrls() {
 
     while (rows.hasNext()) {
       var row = rows.next();
-      var finalUrls = row['CreativeFinalUrls'];
-      var cost = parseFloat(row['Cost']);
+      var finalUrls = row['ad_group_ad.ad.final_urls'];
+      var cost = parseFloat(row['metrics.cost_micros']) / 1000000;
 
       if (cost < CONFIG.MIN_CAMPAIGN_SPEND) continue;
 
@@ -151,11 +152,11 @@ function getLandingPageUrls() {
                 totalCost: 0
               };
             }
-            if (urlMap[url].campaigns.indexOf(row['CampaignName']) === -1) {
-              urlMap[url].campaigns.push(row['CampaignName']);
+            if (urlMap[url].campaigns.indexOf(row['campaign.name']) === -1) {
+              urlMap[url].campaigns.push(row['campaign.name']);
             }
-            if (urlMap[url].adGroups.indexOf(row['AdGroupName']) === -1) {
-              urlMap[url].adGroups.push(row['AdGroupName']);
+            if (urlMap[url].adGroups.indexOf(row['ad_group.name']) === -1) {
+              urlMap[url].adGroups.push(row['ad_group.name']);
             }
             urlMap[url].totalCost += cost;
           }

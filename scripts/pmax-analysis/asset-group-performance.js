@@ -92,21 +92,22 @@ function getPMaxData() {
     assetGroups: []
   };
 
-  // Get PMax campaign performance
-  var campaignQuery = 'SELECT CampaignName, CampaignId, ' +
-                      'Impressions, Clicks, Cost, Conversions, ConversionValue ' +
-                      'FROM CAMPAIGN_PERFORMANCE_REPORT ' +
-                      'WHERE AdvertisingChannelType = PERFORMANCE_MAX ' +
-                      'AND CampaignStatus = ENABLED ' +
-                      'AND Impressions > 0 ' +
-                      'DURING ' + CONFIG.DATE_RANGE;
+  // Get PMax campaign performance using GAQL
+  var campaignQuery = 'SELECT campaign.name, campaign.id, ' +
+                      'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
+                      'metrics.conversions, metrics.conversions_value ' +
+                      'FROM campaign ' +
+                      'WHERE campaign.advertising_channel_type = "PERFORMANCE_MAX" ' +
+                      'AND campaign.status = "ENABLED" ' +
+                      'AND metrics.impressions > 0 ' +
+                      'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
   if (CONFIG.CAMPAIGN_NAME_CONTAINS) {
-    campaignQuery += " AND CampaignName CONTAINS_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_CONTAINS + "'";
+    campaignQuery += " AND campaign.name REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_CONTAINS + ".*'";
   }
 
   if (CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN) {
-    campaignQuery += " AND CampaignName DOES_NOT_CONTAIN_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + "'";
+    campaignQuery += " AND campaign.name NOT REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + ".*'";
   }
 
   try {
@@ -116,13 +117,13 @@ function getPMaxData() {
     while (campaignRows.hasNext()) {
       var row = campaignRows.next();
       data.campaigns.push({
-        name: row['CampaignName'],
-        id: row['CampaignId'],
-        impressions: parseInt(row['Impressions'], 10),
-        clicks: parseInt(row['Clicks'], 10),
-        cost: parseFloat(row['Cost']),
-        conversions: parseFloat(row['Conversions']),
-        conversionValue: parseFloat(row['ConversionValue'])
+        name: row['campaign.name'],
+        id: row['campaign.id'],
+        impressions: parseInt(row['metrics.impressions'], 10),
+        clicks: parseInt(row['metrics.clicks'], 10),
+        cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+        conversions: parseFloat(row['metrics.conversions']),
+        conversionValue: parseFloat(row['metrics.conversions_value'])
       });
     }
   } catch (e) {
@@ -134,12 +135,14 @@ function getPMaxData() {
   // This is a best-effort approach using available reports
 
   try {
-    var assetGroupQuery = 'SELECT CampaignName, AssetGroupName, AssetGroupId, ' +
-                          'AssetGroupStatus, ' +
-                          'Impressions, Clicks, Cost, Conversions, ConversionValue ' +
-                          'FROM ASSET_GROUP_PERFORMANCE_REPORT ' +
-                          'WHERE Impressions > 0 ' +
-                          'DURING ' + CONFIG.DATE_RANGE;
+    // Get asset group performance using GAQL
+    var assetGroupQuery = 'SELECT campaign.name, asset_group.name, asset_group.id, ' +
+                          'asset_group.status, ' +
+                          'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
+                          'metrics.conversions, metrics.conversions_value ' +
+                          'FROM asset_group ' +
+                          'WHERE metrics.impressions > 0 ' +
+                          'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
     var assetGroupReport = AdsApp.report(assetGroupQuery);
     var assetGroupRows = assetGroupReport.rows();
@@ -147,15 +150,15 @@ function getPMaxData() {
     while (assetGroupRows.hasNext()) {
       var row = assetGroupRows.next();
       data.assetGroups.push({
-        campaignName: row['CampaignName'],
-        assetGroupName: row['AssetGroupName'],
-        assetGroupId: row['AssetGroupId'],
-        status: row['AssetGroupStatus'],
-        impressions: parseInt(row['Impressions'], 10),
-        clicks: parseInt(row['Clicks'], 10),
-        cost: parseFloat(row['Cost']),
-        conversions: parseFloat(row['Conversions']),
-        conversionValue: parseFloat(row['ConversionValue'])
+        campaignName: row['campaign.name'],
+        assetGroupName: row['asset_group.name'],
+        assetGroupId: row['asset_group.id'],
+        status: row['asset_group.status'],
+        impressions: parseInt(row['metrics.impressions'], 10),
+        clicks: parseInt(row['metrics.clicks'], 10),
+        cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+        conversions: parseFloat(row['metrics.conversions']),
+        conversionValue: parseFloat(row['metrics.conversions_value'])
       });
     }
   } catch (e) {

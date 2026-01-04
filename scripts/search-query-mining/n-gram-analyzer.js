@@ -104,17 +104,20 @@ function main() {
 // ============================================================================
 
 function getSearchQueryData() {
-  var query = 'SELECT Query, CampaignName, Impressions, Clicks, Cost, Conversions, ConversionValue ' +
-              'FROM SEARCH_QUERY_PERFORMANCE_REPORT ' +
-              'WHERE Impressions > 0 ' +
-              'DURING ' + CONFIG.DATE_RANGE;
+  // Using GAQL with search_term_view resource
+  var query = 'SELECT search_term_view.search_term, campaign.name, ' +
+              'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
+              'metrics.conversions, metrics.conversions_value ' +
+              'FROM search_term_view ' +
+              'WHERE metrics.impressions > 0 ' +
+              'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
   if (CONFIG.CAMPAIGN_NAME_CONTAINS) {
-    query += " AND CampaignName CONTAINS_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_CONTAINS + "'";
+    query += " AND campaign.name REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_CONTAINS + ".*'";
   }
 
   if (CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN) {
-    query += " AND CampaignName DOES_NOT_CONTAIN_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + "'";
+    query += " AND campaign.name NOT REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + ".*'";
   }
 
   var report = AdsApp.report(query);
@@ -124,13 +127,13 @@ function getSearchQueryData() {
   while (rows.hasNext()) {
     var row = rows.next();
     data.push({
-      query: row['Query'].toLowerCase(),
-      campaign: row['CampaignName'],
-      impressions: parseInt(row['Impressions'], 10),
-      clicks: parseInt(row['Clicks'], 10),
-      cost: parseFloat(row['Cost']),
-      conversions: parseFloat(row['Conversions']),
-      conversionValue: parseFloat(row['ConversionValue'])
+      query: row['search_term_view.search_term'].toLowerCase(),
+      campaign: row['campaign.name'],
+      impressions: parseInt(row['metrics.impressions'], 10),
+      clicks: parseInt(row['metrics.clicks'], 10),
+      cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+      conversions: parseFloat(row['metrics.conversions']),
+      conversionValue: parseFloat(row['metrics.conversions_value'])
     });
   }
 

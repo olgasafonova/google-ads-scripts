@@ -125,11 +125,12 @@ function main() {
 function getPlacementData() {
   var placements = [];
 
-  // Get URL placements (websites)
-  var urlQuery = 'SELECT Criteria, CampaignName, Impressions, Clicks, Cost, Conversions ' +
-                 'FROM URL_PERFORMANCE_REPORT ' +
-                 'WHERE Impressions > 0 ' +
-                 'DURING ' + CONFIG.DATE_RANGE;
+  // Get URL placements (websites) using GAQL
+  var urlQuery = 'SELECT detail_placement_view.display_name, campaign.name, ' +
+                 'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+                 'FROM detail_placement_view ' +
+                 'WHERE metrics.impressions > 0 ' +
+                 'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
   try {
     var urlReport = AdsApp.report(urlQuery);
@@ -138,25 +139,26 @@ function getPlacementData() {
     while (urlRows.hasNext()) {
       var row = urlRows.next();
       placements.push({
-        placement: row['Criteria'],
+        placement: row['detail_placement_view.display_name'],
         type: 'URL',
-        campaign: row['CampaignName'],
-        impressions: parseInt(row['Impressions'], 10),
-        clicks: parseInt(row['Clicks'], 10),
-        cost: parseFloat(row['Cost']),
-        conversions: parseFloat(row['Conversions'])
+        campaign: row['campaign.name'],
+        impressions: parseInt(row['metrics.impressions'], 10),
+        clicks: parseInt(row['metrics.clicks'], 10),
+        cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+        conversions: parseFloat(row['metrics.conversions'])
       });
     }
   } catch (e) {
     Logger.log('URL report error: ' + e.message);
   }
 
-  // Get mobile app placements
+  // Get mobile app placements using GAQL
   if (CONFIG.EXCLUDE_MOBILE_APPS) {
-    var appQuery = 'SELECT Criteria, CampaignName, Impressions, Clicks, Cost, Conversions ' +
-                   'FROM PLACEMENT_PERFORMANCE_REPORT ' +
-                   'WHERE Impressions > 0 ' +
-                   'DURING ' + CONFIG.DATE_RANGE;
+    var appQuery = 'SELECT group_placement_view.display_name, campaign.name, ' +
+                   'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+                   'FROM group_placement_view ' +
+                   'WHERE metrics.impressions > 0 ' +
+                   'AND segments.date DURING ' + CONFIG.DATE_RANGE;
 
     try {
       var appReport = AdsApp.report(appQuery);
@@ -164,18 +166,18 @@ function getPlacementData() {
 
       while (appRows.hasNext()) {
         var row = appRows.next();
-        var criteria = row['Criteria'];
+        var criteria = row['group_placement_view.display_name'];
 
         // Check if it's a mobile app
-        if (criteria.indexOf('mobileapp::') === 0) {
+        if (criteria && criteria.indexOf('mobileapp::') === 0) {
           placements.push({
             placement: criteria,
             type: 'MOBILE_APP',
-            campaign: row['CampaignName'],
-            impressions: parseInt(row['Impressions'], 10),
-            clicks: parseInt(row['Clicks'], 10),
-            cost: parseFloat(row['Cost']),
-            conversions: parseFloat(row['Conversions'])
+            campaign: row['campaign.name'],
+            impressions: parseInt(row['metrics.impressions'], 10),
+            clicks: parseInt(row['metrics.clicks'], 10),
+            cost: parseFloat(row['metrics.cost_micros']) / 1000000,
+            conversions: parseFloat(row['metrics.conversions'])
           });
         }
       }

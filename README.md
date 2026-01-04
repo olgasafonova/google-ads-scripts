@@ -129,6 +129,33 @@ MIT License. See [LICENSE](LICENSE).
 
 ## For Developers
 
+### Query Language
+
+All scripts use **GAQL (Google Ads Query Language)**, the current standard for Google Ads reporting. GAQL replaced the deprecated AWQL (AdWords Query Language) in 2022.
+
+Key GAQL patterns used in these scripts:
+
+```javascript
+// Resource-based queries with dot notation
+var query = 'SELECT campaign.name, metrics.clicks, metrics.cost_micros ' +
+            'FROM campaign ' +
+            'WHERE metrics.impressions > 0 ' +
+            'AND segments.date DURING LAST_30_DAYS';
+
+// Cost is returned in micros (divide by 1,000,000)
+var cost = parseFloat(row['metrics.cost_micros']) / 1000000;
+
+// Case-insensitive filtering uses REGEXP_MATCH
+query += " AND campaign.name REGEXP_MATCH '(?i).*brand.*'";
+```
+
+Common GAQL resources:
+- `campaign` — Campaign-level metrics
+- `ad_group_ad` — Ad performance and final URLs
+- `search_term_view` — Search query reports
+- `asset_group` — Performance Max asset groups
+- `detail_placement_view` — Display/Video placement URLs
+
 ### Shared Libraries
 
 If you want to customize or extend scripts, the `lib/` folder contains reusable code:

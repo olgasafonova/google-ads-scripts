@@ -183,46 +183,28 @@ function analyzeCampaigns(campaignData) {
   return analysis;
 }
 
-function generateInsights(analysis) {
-  var insights = [];
-  var totals = analysis.totals;
-
-  // Estimate PMax brand spend
+function buildSpendInsights(totals) {
   var estimatedPmaxBrandSpend = totals.pmaxCost * CONFIG.ESTIMATED_PMAX_BRAND_SHARE;
-  var estimatedPmaxBrandConversions = totals.pmaxConversions * CONFIG.ESTIMATED_PMAX_BRAND_SHARE;
-
-  // Calculate overlap ratio
   var overlapRatio = totals.brandSearchCost > 0 ?
     estimatedPmaxBrandSpend / totals.brandSearchCost : 0;
 
-  // Key metrics
-  insights.push({
-    metric: 'Total PMax Spend',
-    value: totals.pmaxCost,
-    format: 'currency'
-  });
+  var insights = [
+    { metric: 'Total PMax Spend', value: totals.pmaxCost, format: 'currency' },
+    { metric: 'Total Brand Search Spend', value: totals.brandSearchCost, format: 'currency' },
+    {
+      metric: 'Estimated PMax Brand Spend',
+      value: estimatedPmaxBrandSpend,
+      format: 'currency',
+      note: 'Based on ' + (CONFIG.ESTIMATED_PMAX_BRAND_SHARE * 100) + '% brand share assumption'
+    },
+    {
+      metric: 'Brand Overlap Ratio',
+      value: overlapRatio,
+      format: 'percent',
+      note: 'PMax brand spend vs Brand Search spend'
+    }
+  ];
 
-  insights.push({
-    metric: 'Total Brand Search Spend',
-    value: totals.brandSearchCost,
-    format: 'currency'
-  });
-
-  insights.push({
-    metric: 'Estimated PMax Brand Spend',
-    value: estimatedPmaxBrandSpend,
-    format: 'currency',
-    note: 'Based on ' + (CONFIG.ESTIMATED_PMAX_BRAND_SHARE * 100) + '% brand share assumption'
-  });
-
-  insights.push({
-    metric: 'Brand Overlap Ratio',
-    value: overlapRatio,
-    format: 'percent',
-    note: 'PMax brand spend vs Brand Search spend'
-  });
-
-  // Warning if high overlap
   if (overlapRatio > CONFIG.CANNIBALIZATION_THRESHOLD) {
     insights.push({
       metric: '⚠️ CANNIBALIZATION WARNING',
@@ -233,57 +215,55 @@ function generateInsights(analysis) {
     });
   }
 
-  // Efficiency comparison
+  return insights;
+}
+
+function buildCpaInsights(totals) {
   var pmaxCPA = totals.pmaxConversions > 0 ? totals.pmaxCost / totals.pmaxConversions : 0;
   var brandCPA = totals.brandSearchConversions > 0 ?
     totals.brandSearchCost / totals.brandSearchConversions : 0;
   var nonBrandCPA = totals.nonBrandSearchConversions > 0 ?
     totals.nonBrandSearchCost / totals.nonBrandSearchConversions : 0;
 
-  insights.push({
-    metric: 'PMax CPA',
-    value: pmaxCPA,
-    format: 'currency'
-  });
-
-  insights.push({
-    metric: 'Brand Search CPA',
-    value: brandCPA,
-    format: 'currency'
-  });
-
-  insights.push({
-    metric: 'Non-Brand Search CPA',
-    value: nonBrandCPA,
-    format: 'currency'
-  });
-
-  // True incremental value estimate
-  // If we assume X% of PMax is brand, what's the non-brand CPA?
+  // True incremental value estimate: if X% of PMax is brand, what's the non-brand CPA?
   var estimatedPmaxNonBrandSpend = totals.pmaxCost * (1 - CONFIG.ESTIMATED_PMAX_BRAND_SHARE);
   var estimatedPmaxNonBrandConversions = totals.pmaxConversions * (1 - CONFIG.ESTIMATED_PMAX_BRAND_SHARE);
   var estimatedPmaxNonBrandCPA = estimatedPmaxNonBrandConversions > 0 ?
     estimatedPmaxNonBrandSpend / estimatedPmaxNonBrandConversions : 0;
 
-  insights.push({
-    metric: 'Estimated PMax Non-Brand CPA',
-    value: estimatedPmaxNonBrandCPA,
-    format: 'currency',
-    note: 'True incremental cost estimate'
-  });
+  return [
+    { metric: 'PMax CPA', value: pmaxCPA, format: 'currency' },
+    { metric: 'Brand Search CPA', value: brandCPA, format: 'currency' },
+    { metric: 'Non-Brand Search CPA', value: nonBrandCPA, format: 'currency' },
+    {
+      metric: 'Estimated PMax Non-Brand CPA',
+      value: estimatedPmaxNonBrandCPA,
+      format: 'currency',
+      note: 'True incremental cost estimate'
+    }
+  ];
+}
 
-  return insights;
+function generateInsights(analysis) {
+  return buildSpendInsights(analysis.totals).concat(buildCpaInsights(analysis.totals));
 }
 
 // ============================================================================
 // REPORTING
 // ============================================================================
 
-function logResults(analysis, insights, now, timeZone) {
-  var spreadsheet = SpreadsheetApp.openByUrl(CONFIG.SPREADSHEET_URL);
-  var dateStr = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
+function formatInsightValue(insight) {
+  if (insight.value === null) return '';
+  if (insight.format === 'currency') {
+    return '$' + insight.value.toFixed(2);
+  }
+  if (insight.format === 'percent') {
+    return (insight.value * 100).toFixed(1) + '%';
+  }
+  return insight.value;
+}
 
-  // Log insights
+function logInsightRows(spreadsheet, insights, dateStr) {
   var insightSheet = spreadsheet.getSheetByName('Brand Overlap Insights');
   if (!insightSheet) {
     insightSheet = spreadsheet.insertSheet('Brand Overlap Insights');
@@ -293,24 +273,16 @@ function logResults(analysis, insights, now, timeZone) {
   }
 
   insights.forEach(function(insight) {
-    var displayValue = '';
-    if (insight.format === 'currency' && insight.value !== null) {
-      displayValue = '$' + insight.value.toFixed(2);
-    } else if (insight.format === 'percent' && insight.value !== null) {
-      displayValue = (insight.value * 100).toFixed(1) + '%';
-    } else if (insight.value !== null) {
-      displayValue = insight.value;
-    }
-
     insightSheet.appendRow([
       dateStr,
       insight.metric,
-      displayValue,
+      formatInsightValue(insight),
       insight.note || ''
     ]);
   });
+}
 
-  // Log campaign breakdown
+function logCampaignBreakdown(spreadsheet, analysis, dateStr) {
   var campaignSheet = spreadsheet.getSheetByName('Campaign Breakdown');
   if (!campaignSheet) {
     campaignSheet = spreadsheet.insertSheet('Campaign Breakdown');
@@ -333,17 +305,19 @@ function logResults(analysis, insights, now, timeZone) {
       var roas = c.cost > 0 ? c.conversionValue / c.cost : 0;
 
       campaignSheet.appendRow([
-        dateStr,
-        c.name,
-        c.type,
-        group.category,
-        c.cost,
-        c.conversions,
-        cpa,
-        roas
+        dateStr, c.name, c.type, group.category,
+        c.cost, c.conversions, cpa, roas
       ]);
     });
   });
+}
+
+function logResults(analysis, insights, now, timeZone) {
+  var spreadsheet = SpreadsheetApp.openByUrl(CONFIG.SPREADSHEET_URL);
+  var dateStr = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
+
+  logInsightRows(spreadsheet, insights, dateStr);
+  logCampaignBreakdown(spreadsheet, analysis, dateStr);
 }
 
 function sendReport(accountName, analysis, insights) {

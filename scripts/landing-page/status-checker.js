@@ -102,10 +102,7 @@ function main() {
 // DATA RETRIEVAL
 // ============================================================================
 
-function getLandingPageUrls() {
-  var urlMap = {};
-
-  // Get URLs from ads using GAQL
+function buildLandingPageQuery() {
   var adQuery = 'SELECT campaign.name, ad_group.name, ' +
                 'ad_group_ad.ad.final_urls, metrics.impressions, metrics.cost_micros ' +
                 'FROM ad_group_ad ' +
@@ -120,49 +117,61 @@ function getLandingPageUrls() {
     adQuery += " AND campaign.name NOT REGEXP_MATCH '(?i).*" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + ".*'";
   }
 
+  return adQuery;
+}
+
+function parseFinalUrls(finalUrls) {
+  if (!finalUrls) return [];
   try {
-    var report = AdsApp.report(adQuery);
-    var rows = report.rows();
+    // Try parsing as JSON array
+    return JSON.parse(finalUrls);
+  } catch (e) {
+    // Single URL
+    return [finalUrls];
+  }
+}
 
-    while (rows.hasNext()) {
-      var row = rows.next();
-      var finalUrls = row['ad_group_ad.ad.final_urls'];
-      var cost = parseFloat(row['metrics.cost_micros']) / 1000000;
+function addToUrlMap(urlMap, url, campaignName, adGroupName, cost) {
+  if (!url || url.indexOf('http') !== 0) return;
 
-      if (cost < CONFIG.MIN_CAMPAIGN_SPEND) continue;
+  if (!urlMap[url]) {
+    urlMap[url] = {
+      url: url,
+      campaigns: [],
+      adGroups: [],
+      totalCost: 0
+    };
+  }
+  if (urlMap[url].campaigns.indexOf(campaignName) === -1) {
+    urlMap[url].campaigns.push(campaignName);
+  }
+  if (urlMap[url].adGroups.indexOf(adGroupName) === -1) {
+    urlMap[url].adGroups.push(adGroupName);
+  }
+  urlMap[url].totalCost += cost;
+}
 
-      // Parse final URLs (may be JSON array format)
-      if (finalUrls) {
-        var urls = [];
-        try {
-          // Try parsing as JSON array
-          urls = JSON.parse(finalUrls);
-        } catch (e) {
-          // Single URL
-          urls = [finalUrls];
-        }
+function collectUrlsFromReport(urlMap) {
+  var report = AdsApp.report(buildLandingPageQuery());
+  var rows = report.rows();
 
-        urls.forEach(function(url) {
-          if (url && url.indexOf('http') === 0) {
-            if (!urlMap[url]) {
-              urlMap[url] = {
-                url: url,
-                campaigns: [],
-                adGroups: [],
-                totalCost: 0
-              };
-            }
-            if (urlMap[url].campaigns.indexOf(row['campaign.name']) === -1) {
-              urlMap[url].campaigns.push(row['campaign.name']);
-            }
-            if (urlMap[url].adGroups.indexOf(row['ad_group.name']) === -1) {
-              urlMap[url].adGroups.push(row['ad_group.name']);
-            }
-            urlMap[url].totalCost += cost;
-          }
-        });
-      }
-    }
+  while (rows.hasNext()) {
+    var row = rows.next();
+    var cost = parseFloat(row['metrics.cost_micros']) / 1000000;
+
+    if (cost < CONFIG.MIN_CAMPAIGN_SPEND) continue;
+
+    parseFinalUrls(row['ad_group_ad.ad.final_urls']).forEach(function(url) {
+      addToUrlMap(urlMap, url, row['campaign.name'], row['ad_group.name'], cost);
+    });
+  }
+}
+
+function getLandingPageUrls() {
+  var urlMap = {};
+
+  try {
+    collectUrlsFromReport(urlMap);
   } catch (e) {
     Logger.log('Error fetching URLs: ' + e.message);
   }
@@ -182,6 +191,66 @@ function getLandingPageUrls() {
 // URL CHECKING
 // ============================================================================
 
+function classifyFetchError(message) {
+  if (message.indexOf('timeout') !== -1 || message.indexOf('Timeout') !== -1) {
+    return 'TIMEOUT';
+  }
+  if (message.indexOf('SSL') !== -1 || message.indexOf('certificate') !== -1) {
+    return 'SSL_ERROR';
+  }
+  if (message.indexOf('DNS') !== -1 || message.indexOf('resolve') !== -1) {
+    return 'DNS_ERROR';
+  }
+  return 'FETCH_ERROR';
+}
+
+function applyResponseStatus(result) {
+  if (CONFIG.ALERT_STATUS_CODES.indexOf(result.statusCode) !== -1) {
+    result.hasIssue = true;
+    result.issueType = 'HTTP_' + result.statusCode;
+  } else if (result.responseTime > CONFIG.SLOW_PAGE_THRESHOLD_MS) {
+    result.hasIssue = true;
+    result.issueType = 'SLOW_RESPONSE';
+  }
+}
+
+function checkSingleUrl(urlData) {
+  var result = {
+    url: urlData.url,
+    campaigns: urlData.campaigns,
+    adGroups: urlData.adGroups,
+    totalCost: urlData.totalCost,
+    statusCode: null,
+    responseTime: null,
+    finalUrl: null,
+    redirectCount: 0,
+    error: null,
+    hasIssue: false,
+    issueType: null
+  };
+
+  try {
+    var startTime = new Date().getTime();
+
+    var response = UrlFetchApp.fetch(urlData.url, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+      timeout: CONFIG.TIMEOUT_MS / 1000
+    });
+
+    result.responseTime = new Date().getTime() - startTime;
+    result.statusCode = response.getResponseCode();
+
+    applyResponseStatus(result);
+  } catch (e) {
+    result.error = e.message;
+    result.hasIssue = true;
+    result.issueType = classifyFetchError(e.message);
+  }
+
+  return result;
+}
+
 function checkUrls(urlList) {
   var results = [];
 
@@ -190,62 +259,7 @@ function checkUrls(urlList) {
       Logger.log('Checking URL ' + (index + 1) + ' of ' + urlList.length);
     }
 
-    var result = {
-      url: urlData.url,
-      campaigns: urlData.campaigns,
-      adGroups: urlData.adGroups,
-      totalCost: urlData.totalCost,
-      statusCode: null,
-      responseTime: null,
-      finalUrl: null,
-      redirectCount: 0,
-      error: null,
-      hasIssue: false,
-      issueType: null
-    };
-
-    try {
-      var startTime = new Date().getTime();
-
-      var response = UrlFetchApp.fetch(urlData.url, {
-        muteHttpExceptions: true,
-        followRedirects: true,
-        timeout: CONFIG.TIMEOUT_MS / 1000
-      });
-
-      var endTime = new Date().getTime();
-      result.responseTime = endTime - startTime;
-      result.statusCode = response.getResponseCode();
-
-      // Check for redirect (compare final URL)
-      var headers = response.getAllHeaders();
-      // Note: UrlFetchApp follows redirects automatically
-
-      // Check for issues
-      if (CONFIG.ALERT_STATUS_CODES.indexOf(result.statusCode) !== -1) {
-        result.hasIssue = true;
-        result.issueType = 'HTTP_' + result.statusCode;
-      } else if (result.responseTime > CONFIG.SLOW_PAGE_THRESHOLD_MS) {
-        result.hasIssue = true;
-        result.issueType = 'SLOW_RESPONSE';
-      }
-
-    } catch (e) {
-      result.error = e.message;
-      result.hasIssue = true;
-
-      if (e.message.indexOf('timeout') !== -1 || e.message.indexOf('Timeout') !== -1) {
-        result.issueType = 'TIMEOUT';
-      } else if (e.message.indexOf('SSL') !== -1 || e.message.indexOf('certificate') !== -1) {
-        result.issueType = 'SSL_ERROR';
-      } else if (e.message.indexOf('DNS') !== -1 || e.message.indexOf('resolve') !== -1) {
-        result.issueType = 'DNS_ERROR';
-      } else {
-        result.issueType = 'FETCH_ERROR';
-      }
-    }
-
-    results.push(result);
+    results.push(checkSingleUrl(urlData));
 
     // Small delay to avoid rate limiting
     Utilities.sleep(100);
@@ -322,14 +336,7 @@ function logResults(results, now, timeZone) {
   }
 }
 
-function sendAlerts(accountName, issues) {
-  var subject = '[Google Ads] Landing Page Issues - ' + accountName;
-
-  var body = 'Landing Page Issues Detected\n';
-  body += 'Account: ' + accountName + '\n';
-  body += 'Issues found: ' + issues.length + '\n\n';
-
-  // Group by issue type
+function groupIssuesByType(issues) {
   var byType = {};
   issues.forEach(function(issue) {
     if (!byType[issue.issueType]) {
@@ -337,19 +344,34 @@ function sendAlerts(accountName, issues) {
     }
     byType[issue.issueType].push(issue);
   });
+  return byType;
+}
+
+function totalIssueSpend(issues) {
+  return issues.reduce(function(sum, i) { return sum + i.totalCost; }, 0).toFixed(2);
+}
+
+function formatIssueLine(issue) {
+  var line = '• ' + issue.url.substring(0, 60) + '...\n';
+  line += '  Campaigns: ' + issue.campaigns.slice(0, 2).join(', ') + '\n';
+  line += '  Spend: $' + issue.totalCost.toFixed(2) + '\n';
+  if (issue.error) {
+    line += '  Error: ' + issue.error.substring(0, 50) + '\n';
+  }
+  return line + '\n';
+}
+
+function buildAlertEmailBody(accountName, issues, byType) {
+  var body = 'Landing Page Issues Detected\n';
+  body += 'Account: ' + accountName + '\n';
+  body += 'Issues found: ' + issues.length + '\n\n';
 
   for (var issueType in byType) {
     body += '🚨 ' + issueType + ' (' + byType[issueType].length + ')\n';
     body += '─────────────────────────────────────\n';
 
     byType[issueType].slice(0, 5).forEach(function(issue) {
-      body += '• ' + issue.url.substring(0, 60) + '...\n';
-      body += '  Campaigns: ' + issue.campaigns.slice(0, 2).join(', ') + '\n';
-      body += '  Spend: $' + issue.totalCost.toFixed(2) + '\n';
-      if (issue.error) {
-        body += '  Error: ' + issue.error.substring(0, 50) + '\n';
-      }
-      body += '\n';
+      body += formatIssueLine(issue);
     });
 
     if (byType[issueType].length > 5) {
@@ -357,37 +379,43 @@ function sendAlerts(accountName, issues) {
     }
   }
 
-  body += '\n💰 Total spend on broken pages: $' +
-          issues.reduce(function(sum, i) { return sum + i.totalCost; }, 0).toFixed(2) + '\n';
-
+  body += '\n💰 Total spend on broken pages: $' + totalIssueSpend(issues) + '\n';
   body += '\n--\nSent by Google Ads Scripts Landing Page Checker';
+  return body;
+}
+
+function buildSlackMessage(subject, issues, byType) {
+  var slackMsg = '*' + subject + '*\n\n';
+  slackMsg += ':rotating_light: ' + issues.length + ' landing pages have issues\n\n';
+
+  for (var type in byType) {
+    slackMsg += '*' + type + '*: ' + byType[type].length + ' URLs\n';
+  }
+
+  slackMsg += '\nTotal spend at risk: $' + totalIssueSpend(issues);
+  return slackMsg;
+}
+
+function sendAlerts(accountName, issues) {
+  var subject = '[Google Ads] Landing Page Issues - ' + accountName;
+  var byType = groupIssuesByType(issues);
 
   // Send email
   if (CONFIG.EMAIL_RECIPIENTS) {
     MailApp.sendEmail({
       to: CONFIG.EMAIL_RECIPIENTS,
       subject: subject,
-      body: body
+      body: buildAlertEmailBody(accountName, issues, byType)
     });
     Logger.log('Alert email sent');
   }
 
   // Send Slack
   if (CONFIG.SLACK_WEBHOOK_URL) {
-    var slackMsg = '*' + subject + '*\n\n';
-    slackMsg += ':rotating_light: ' + issues.length + ' landing pages have issues\n\n';
-
-    for (var type in byType) {
-      slackMsg += '*' + type + '*: ' + byType[type].length + ' URLs\n';
-    }
-
-    slackMsg += '\nTotal spend at risk: $' +
-                issues.reduce(function(sum, i) { return sum + i.totalCost; }, 0).toFixed(2);
-
     UrlFetchApp.fetch(CONFIG.SLACK_WEBHOOK_URL, {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ text: slackMsg })
+      payload: JSON.stringify({ text: buildSlackMessage(subject, issues, byType) })
     });
     Logger.log('Slack alert sent');
   }

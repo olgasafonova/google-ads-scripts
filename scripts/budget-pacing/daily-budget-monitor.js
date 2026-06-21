@@ -49,20 +49,7 @@ var CONFIG = {
 // MAIN FUNCTION
 // ============================================================================
 
-function main() {
-  var accountName = AdsApp.currentAccount().getName();
-  var accountId = AdsApp.currentAccount().getCustomerId();
-  var timeZone = AdsApp.currentAccount().getTimeZone();
-  var now = new Date();
-  var currentHour = parseInt(Utilities.formatDate(now, timeZone, 'H'));
-
-  Logger.log('Starting budget monitor for account: ' + accountName);
-  Logger.log('Current hour: ' + currentHour);
-
-  var alerts = [];
-  var campaignData = [];
-
-  // Build campaign selector
+function buildCampaignSelector() {
   var campaignSelector = AdsApp.campaigns()
     .withCondition('Status = ENABLED');
 
@@ -76,86 +63,116 @@ function main() {
       .withCondition("Name DOES_NOT_CONTAIN_IGNORE_CASE '" + CONFIG.CAMPAIGN_NAME_DOES_NOT_CONTAIN + "'");
   }
 
-  var campaigns = campaignSelector.get();
+  return campaignSelector;
+}
+
+function classifyBudgetStatus(row, currentHour) {
+  var spendRatio = row.spendRatio;
+
+  if (spendRatio >= CONFIG.OVERSPEND_THRESHOLD) {
+    return {
+      status: 'OVERSPEND',
+      alert: {
+        severity: 'warning',
+        campaign: row.campaignName,
+        message: 'Overspending: ' + formatPercent(spendRatio) + ' of daily budget spent (' +
+                 formatCurrency(row.todaySpend) + ' / ' + formatCurrency(row.dailyBudget) + ')'
+      }
+    };
+  }
+
+  if (spendRatio >= CONFIG.NEAR_LIMIT_THRESHOLD) {
+    return {
+      status: 'NEAR_LIMIT',
+      alert: {
+        severity: 'info',
+        campaign: row.campaignName,
+        message: 'Near budget limit: ' + formatPercent(spendRatio) + ' of daily budget spent (' +
+                 formatCurrency(row.todaySpend) + ' / ' + formatCurrency(row.dailyBudget) + ')'
+      }
+    };
+  }
+
+  if (currentHour >= 12 && spendRatio < CONFIG.UNDERSPEND_THRESHOLD * row.expectedRatio) {
+    return {
+      status: 'UNDERSPEND',
+      alert: {
+        severity: 'warning',
+        campaign: row.campaignName,
+        message: 'Underspending: Only ' + formatPercent(spendRatio) + ' of budget spent by ' +
+                 currentHour + ':00 (expected ~' + formatPercent(row.expectedRatio) + ')'
+      }
+    };
+  }
+
+  return { status: 'OK', alert: null };
+}
+
+function buildCampaignRow(campaign, now, timeZone, currentHour) {
+  var budget = campaign.getBudget();
+  if (!budget) return null;
+
+  var dailyBudget = budget.getAmount();
+
+  // Skip campaigns below minimum budget threshold
+  if (dailyBudget < CONFIG.MIN_BUDGET_AMOUNT) return null;
+
+  var todaySpend = campaign.getStatsFor('TODAY').getCost();
+
+  return {
+    timestamp: Utilities.formatDate(now, timeZone, 'yyyy-MM-dd HH:mm'),
+    campaignName: campaign.getName(),
+    dailyBudget: dailyBudget,
+    todaySpend: todaySpend,
+    spendRatio: dailyBudget > 0 ? todaySpend / dailyBudget : 0,
+    expectedRatio: currentHour / 24,
+    status: 'OK'
+  };
+}
+
+function evaluateCampaigns(now, timeZone, currentHour) {
+  var alerts = [];
+  var campaignData = [];
+
+  var campaigns = buildCampaignSelector().get();
 
   while (campaigns.hasNext()) {
-    var campaign = campaigns.next();
-    var campaignName = campaign.getName();
-    var budget = campaign.getBudget();
+    var row = buildCampaignRow(campaigns.next(), now, timeZone, currentHour);
+    if (!row) continue;
 
-    if (!budget) continue;
-
-    var dailyBudget = budget.getAmount();
-
-    // Skip campaigns below minimum budget threshold
-    if (dailyBudget < CONFIG.MIN_BUDGET_AMOUNT) continue;
-
-    // Get today's stats
-    var stats = campaign.getStatsFor('TODAY');
-    var todaySpend = stats.getCost();
-    var spendRatio = dailyBudget > 0 ? todaySpend / dailyBudget : 0;
-
-    // Calculate expected spend based on hour of day
-    var expectedRatio = currentHour / 24;
-
-    // Build campaign row for logging
-    var row = {
-      timestamp: Utilities.formatDate(now, timeZone, 'yyyy-MM-dd HH:mm'),
-      campaignName: campaignName,
-      dailyBudget: dailyBudget,
-      todaySpend: todaySpend,
-      spendRatio: spendRatio,
-      expectedRatio: expectedRatio,
-      status: 'OK'
-    };
-
-    // Check for overspend
-    if (spendRatio >= CONFIG.OVERSPEND_THRESHOLD) {
-      row.status = 'OVERSPEND';
-      alerts.push({
-        severity: 'warning',
-        campaign: campaignName,
-        message: 'Overspending: ' + formatPercent(spendRatio) + ' of daily budget spent (' +
-                 formatCurrency(todaySpend) + ' / ' + formatCurrency(dailyBudget) + ')'
-      });
-    }
-
-    // Check for near budget limit
-    else if (spendRatio >= CONFIG.NEAR_LIMIT_THRESHOLD) {
-      row.status = 'NEAR_LIMIT';
-      alerts.push({
-        severity: 'info',
-        campaign: campaignName,
-        message: 'Near budget limit: ' + formatPercent(spendRatio) + ' of daily budget spent (' +
-                 formatCurrency(todaySpend) + ' / ' + formatCurrency(dailyBudget) + ')'
-      });
-    }
-
-    // Check for underspend (only after midday)
-    else if (currentHour >= 12 && spendRatio < CONFIG.UNDERSPEND_THRESHOLD * expectedRatio) {
-      row.status = 'UNDERSPEND';
-      alerts.push({
-        severity: 'warning',
-        campaign: campaignName,
-        message: 'Underspending: Only ' + formatPercent(spendRatio) + ' of budget spent by ' +
-                 currentHour + ':00 (expected ~' + formatPercent(expectedRatio) + ')'
-      });
-    }
+    var classification = classifyBudgetStatus(row, currentHour);
+    row.status = classification.status;
+    if (classification.alert) alerts.push(classification.alert);
 
     campaignData.push(row);
   }
 
+  return { alerts: alerts, campaignData: campaignData };
+}
+
+function main() {
+  var accountName = AdsApp.currentAccount().getName();
+  var timeZone = AdsApp.currentAccount().getTimeZone();
+  var now = new Date();
+  var currentHour = parseInt(Utilities.formatDate(now, timeZone, 'H'));
+
+  Logger.log('Starting budget monitor for account: ' + accountName);
+  Logger.log('Current hour: ' + currentHour);
+
+  var result = evaluateCampaigns(now, timeZone, currentHour);
+
   // Log to spreadsheet
   if (CONFIG.SPREADSHEET_URL && CONFIG.SPREADSHEET_URL !== 'YOUR_SPREADSHEET_URL_HERE') {
-    logToSpreadsheet(campaignData);
+    logToSpreadsheet(result.campaignData);
   }
 
   // Send alerts
-  if (alerts.length > 0) {
-    sendAlerts(accountName, alerts);
+  if (result.alerts.length > 0) {
+    sendAlerts(accountName, result.alerts);
   }
 
-  Logger.log('Finished. Found ' + alerts.length + ' alerts across ' + campaignData.length + ' campaigns.');
+  Logger.log('Finished. Found ' + result.alerts.length + ' alerts across ' +
+             result.campaignData.length + ' campaigns.');
 }
 
 // ============================================================================
